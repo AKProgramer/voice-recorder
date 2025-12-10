@@ -1,6 +1,10 @@
 "use client";
 import React, { useState, useRef, useEffect } from 'react';
-import { Mic, Square, Download, Play, Pause, FileText, Loader2, X, Save, Edit2 } from 'lucide-react';
+import { marked } from 'marked';
+import BackgroundAnimation from '@/components/BackgroundAnimation';
+import TimerDisplay from '@/components/TimerDisplay';
+import ControlButtons from '@/components/ControlButtons';
+import TranscriptModal from '@/components/TranscriptModal';
 
 export default function AudioRecorder() {
   const [isRecording, setIsRecording] = useState(false);
@@ -14,6 +18,16 @@ export default function AudioRecorder() {
   const [transcriptText, setTranscriptText] = useState('');
   const [transcriptName, setTranscriptName] = useState('');
   const [audioBlobRef, setAudioBlobRef] = useState(null);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [summaryText, setSummaryText] = useState('');
+  const [markdownSummary, setMarkdownSummary] = useState('');
+  const [showSummary, setShowSummary] = useState(false);
+  const [isEditingEmail, setIsEditingEmail] = useState(false);
+  const [emailRecipients, setEmailRecipients] = useState([]);
+  const [emailInputValue, setEmailInputValue] = useState('');
+  const [emailSubject, setEmailSubject] = useState('');
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailSentSuccess, setEmailSentSuccess] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -90,7 +104,7 @@ export default function AudioRecorder() {
     // Stop the MediaRecorder if present
     if (mediaRecorderRef.current) {
       const state = mediaRecorderRef.current.state;
-      
+
       if (state !== 'inactive') {
         try {
           mediaRecorderRef.current.stop();
@@ -121,7 +135,7 @@ export default function AudioRecorder() {
 
   const togglePlayPause = () => {
     if (!audioPlayerRef.current) return;
-    
+
     if (isPlaying) {
       audioPlayerRef.current.pause();
       setIsPlaying(false);
@@ -138,7 +152,7 @@ export default function AudioRecorder() {
     }
 
     setIsTranscribing(true);
-    
+
     try {
       // Step 1: Upload audio to AssemblyAI
       const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
@@ -173,9 +187,9 @@ export default function AudioRecorder() {
             'authorization': 'd41f2097d45a4e8bafad51f986ecb7d9',
           }
         });
-        
+
         transcript = await pollingResponse.json();
-        
+
         if (transcript.status === 'completed') {
           setTranscriptText(transcript.text);
           setTranscriptName(`transcript-${Date.now()}`);
@@ -184,7 +198,7 @@ export default function AudioRecorder() {
         } else if (transcript.status === 'error') {
           throw new Error('Transcription failed');
         }
-        
+
         // Wait 3 seconds before polling again
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
@@ -207,37 +221,195 @@ export default function AudioRecorder() {
     setShowTranscriptModal(false);
   };
 
+  const summarizeTranscript = async () => {
+    if (!transcriptText) {
+      alert('No transcript text to summarize');
+      return;
+    }
+
+    setIsSummarizing(true);
+
+    try {
+      const prompt = `
+          You are a professional summarization assistant.
+
+          Your job is to create a **clean, organized, Markdown-formatted summary** of the transcript I will provide.
+
+          ### SUMMARY RULES
+          - Use clear Markdown headings (##, ###, ####)
+          - Use bullet points (-) for lists
+          - Keep only important and meaningful information
+          - Remove filler words, repetitions, greetings, and irrelevant small talk
+          - Preserve the full meaning and key points
+          - Keep the summary in chronological order
+          - Clearly highlight:
+            - Key insights
+            - Decisions made
+            - Tasks and action items
+            - Important outcomes and conclusions
+          - Only add sections that are relevant to this transcript
+          - Do NOT invent or assume information
+
+          ### OUTPUT FORMAT
+          Your summary must be structured like this (only include sections that apply):
+
+          ## Overview  
+          - Brief overview of what the transcript is about
+
+          ## Key Points / Discussion Summary  
+          - Main topics discussed  
+          - Important explanations, clarifications, or ideas  
+
+          ## Decisions Made  
+          - List of decisions (if any)
+
+          ## Action Items / Tasks  
+          - Who needs to do what (if mentioned)
+
+          ## Conclusion  
+          - Final thoughts or outcomes
+
+          ---
+
+          ### TRANSCRIPT:
+          ${transcriptText}
+          `;
+
+
+      const response = await fetch('https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=AIzaSyC8y-1n9Nua2YJT0jdhY9PqTwVPXYErT20', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
+          }]
+        })
+      });
+
+      const data = await response.json();
+
+      if (data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+        const markdownText = data.candidates[0].content.parts[0].text;
+        const htmlSummary = marked(markdownText);
+        setMarkdownSummary(markdownText);
+        setSummaryText(htmlSummary);
+        setShowSummary(true);
+        setEmailSubject(`Summary: ${transcriptName}`);
+      } else {
+        throw new Error('Invalid response from Gemini API');
+      }
+    } catch (error) {
+      console.error('Summarization error:', error);
+      alert('Failed to summarize transcript. Please try again.');
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
+  const sendEmail = async () => {
+    if (emailRecipients.length === 0) {
+      alert('Please enter at least one email recipient');
+      return;
+    }
+    if (!emailSubject) {
+      alert('Please enter an email subject');
+      return;
+    }
+    if (!summaryText) {
+      alert('No summary to send');
+      return;
+    }
+
+    setIsSendingEmail(true);
+    setEmailSentSuccess(false);
+
+    try {
+      const response = await fetch('/api/send-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          recipients: emailRecipients,
+          subject: emailSubject,
+          htmlContent: summaryText
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setEmailSentSuccess(true);
+        // Show success message for 2 seconds
+        setTimeout(() => {
+          setShowTranscriptModal(false);
+          setEmailSentSuccess(false);
+          // Reset email fields
+          setEmailRecipients([]);
+          setEmailInputValue('');
+          setEmailSubject('');
+        }, 2000);
+      } else {
+        throw new Error(data.error || 'Failed to send email');
+      }
+    } catch (error) {
+      console.error('Email sending error:', error);
+      alert(`Failed to send email: ${error.message}`);
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
+
+  const handleEmailKeyDown = (e) => {
+    if (e.key === 'Enter' && emailInputValue.trim()) {
+      e.preventDefault();
+      const email = emailInputValue.trim();
+      // Basic email validation
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (!emailRecipients.includes(email)) {
+          setEmailRecipients([...emailRecipients, email]);
+          setEmailInputValue('');
+        }
+      } else {
+        alert('Please enter a valid email address');
+      }
+    }
+  };
+
+  const removeEmailRecipient = (emailToRemove) => {
+    setEmailRecipients(emailRecipients.filter(email => email !== emailToRemove));
+  };
+
+  const handleBackToTranscript = () => {
+    setShowSummary(false);
+    setSummaryText('');
+    setMarkdownSummary('');
+    setEmailRecipients([]);
+    setEmailInputValue('');
+    setEmailSubject('');
+  };
+
   return (
     <div className="min-h-screen bg-linear-to-br from-stone-100 via-amber-50 to-stone-100 flex flex-col items-center justify-between p-4 sm:p-6 md:p-8 relative overflow-hidden">
-      
+
       {/* Animated background circles */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-64 h-64 sm:w-80 sm:h-80 md:w-96 md:h-96 bg-stone-200/30 rounded-full blur-3xl animate-pulse"></div>
-        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 sm:w-80 sm:h-80 md:w-96 md:h-96 bg-amber-200/20 rounded-full blur-3xl animate-pulse" style={{animationDelay: '1.5s'}}></div>
-      </div>
+      <BackgroundAnimation />
 
       <div className="z-10 flex flex-col items-center w-full max-w-2xl space-y-16 sm:space-y-24 md:space-y-40">
-        
-        {/* Timer Display */}
-        <div className="text-center">
-          <div className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-bold text-stone-800 tracking-wider font-mono mb-3 sm:mb-4">
-            {formatTime(recordingTime)}
-          </div>
 
-          {isRecording && (
-            <div className="flex items-center justify-center gap-2 sm:gap-3 text-red-600 text-base sm:text-lg md:text-xl">
-              <div className="w-3 h-3 sm:w-4 sm:h-4 bg-red-500 rounded-full animate-pulse"></div>
-              <span className="font-medium">Recording...</span>
-            </div>
-          )}
-        </div>
+        {/* Timer Display */}
+        <TimerDisplay recordingTime={recordingTime} isRecording={isRecording} />
 
         {/* Audio Player */}
         {audioURL && !isRecording && (
           <div className="w-full">
-            <audio 
+            <audio
               ref={audioPlayerRef}
-              src={audioURL} 
+              src={audioURL}
               className="hidden"
               onPlay={() => setIsPlaying(true)}
               onPause={() => setIsPlaying(false)}
@@ -247,68 +419,17 @@ export default function AudioRecorder() {
         )}
 
         {/* Control Buttons */}
-        <div className="flex items-center gap-3 sm:gap-4 md:gap-6 pt-4 sm:pt-6 md:pt-8">
-          {/* Transcription Button */}
-          {audioURL && !isRecording && (
-            <button
-              onClick={getTranscription}
-              className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center bg-stone-700 hover:bg-stone-800 transition-all shadow-lg transform hover:scale-105 cursor-pointer"
-              title="Get Transcription"
-            >
-              <FileText size={20} className="text-stone-100 sm:w-6 sm:h-6 md:w-7 md:h-7" />
-            </button>
-          )}
-
-          {/* Main Record/Stop/Play Button */}
-          <button
-            onClick={() => {
-              if (isRecording) {
-                stopRecording();
-              } else if (audioURL && !isRecording && !isTranscribing) {
-                togglePlayPause();
-              } else if (!isTranscribing) {
-                startRecording();
-              }
-            }}
-            disabled={isTranscribing}
-            className={`w-24 h-24 sm:w-28 sm:h-28 md:w-32 md:h-32 rounded-full flex items-center justify-center transition-all shadow-2xl transform hover:scale-105 cursor-pointer ${
-              isTranscribing
-                ? "bg-stone-600 cursor-wait"
-                : isRecording
-                ? "bg-red-600 hover:bg-red-700"
-                : audioURL
-                ? isPlaying
-                  ? "bg-stone-600 hover:bg-stone-700"
-                  : "bg-stone-700 hover:bg-stone-800"
-                : "bg-stone-800 hover:bg-stone-900"
-            }`}
-          >
-            {isTranscribing ? (
-              <Loader2 size={36} className="text-stone-100 animate-spin sm:w-10 sm:h-10 md:w-12 md:h-12" />
-            ) : isRecording ? (
-              <Square size={36} className="text-stone-100 fill-stone-100 sm:w-10 sm:h-10 md:w-12 md:h-12" />
-            ) : audioURL ? (
-              isPlaying ? (
-                <Pause size={36} className="text-stone-100 fill-stone-100 sm:w-10 sm:h-10 md:w-12 md:h-12" />
-              ) : (
-                <Play size={36} className="text-stone-100 fill-stone-100 ml-2 sm:w-10 sm:h-10 md:w-12 md:h-12" />
-              )
-            ) : (
-              <Mic size={36} className="text-stone-100 sm:w-10 sm:h-10 md:w-12 md:h-12" />
-            )}
-          </button>
-
-          {/* Download Button */}
-          {audioURL && !isRecording && (
-            <button
-              onClick={downloadRecording}
-              className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-full flex items-center justify-center bg-stone-700 hover:bg-stone-800 transition-all shadow-lg transform hover:scale-105 cursor-pointer"
-              title="Download Recording"
-            >
-              <Download size={20} className="text-stone-100 sm:w-6 sm:h-6 md:w-7 md:h-7" />
-            </button>
-          )}
-        </div>
+        <ControlButtons
+          isRecording={isRecording}
+          audioURL={audioURL}
+          isTranscribing={isTranscribing}
+          isPlaying={isPlaying}
+          onRecord={startRecording}
+          onStop={stopRecording}
+          onPlayPause={togglePlayPause}
+          onTranscribe={getTranscription}
+          onDownload={downloadRecording}
+        />
 
         {/* Status hint text */}
         {!isRecording && audioURL && (
@@ -324,77 +445,33 @@ export default function AudioRecorder() {
       </div>
 
       {/* Transcription Modal */}
-      {showTranscriptModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-linear-to-br from-stone-50 to-amber-50 rounded-2xl sm:rounded-3xl shadow-2xl max-w-full sm:max-w-2xl md:max-w-3xl lg:max-w-4xl w-full max-h-[90vh] sm:max-h-[85vh] overflow-hidden flex flex-col border border-stone-200/50 animate-in slide-in-from-bottom-4 duration-300">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-4 sm:p-6 md:p-8 border-b border-stone-200/70 bg-white/40 backdrop-blur-sm">
-              <div>
-                <h2 className="text-xl sm:text-2xl md:text-3xl font-bold text-stone-900 tracking-tight font-serif">Transcription</h2>
-                <p className="text-xs sm:text-sm text-stone-600 mt-1 font-light tracking-wide">Edit and save your transcript</p>
-              </div>
-              <button
-                onClick={() => setShowTranscriptModal(false)}
-                className="p-2 sm:p-2.5 hover:bg-stone-200/60 rounded-xl transition-all hover:rotate-90 duration-200"
-                title="Close"
-              >
-                <X size={20} className="text-stone-700 sm:w-6 sm:h-6" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-4 sm:space-y-5 md:space-y-6">
-              {/* Name Input */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-stone-800 uppercase tracking-wider">
-                  <Edit2 size={14} className="sm:w-4 sm:h-4" />
-                  File Name
-                </label>
-                <input
-                  type="text"
-                  value={transcriptName}
-                  onChange={(e) => setTranscriptName(e.target.value)}
-                  className="w-full px-3 py-2 sm:px-4 sm:py-3 md:px-5 md:py-3.5 bg-white border-2 border-stone-200 rounded-lg sm:rounded-xl text-sm sm:text-base focus:ring-2 focus:ring-stone-400 focus:border-stone-400 outline-none text-stone-900 font-medium placeholder:text-stone-400 transition-all shadow-sm hover:border-stone-300"
-                  placeholder="my-transcript"
-                />
-              </div>
-
-              {/* Transcript Text */}
-              <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-stone-800 uppercase tracking-wider">
-                  <FileText size={14} className="sm:w-4 sm:h-4" />
-                  Transcript Content
-                </label>
-                <textarea
-                  value={transcriptText}
-                  onChange={(e) => setTranscriptText(e.target.value)}
-                  className="w-full h-48 sm:h-56 md:h-64 lg:h-72 px-3 py-3 sm:px-4 sm:py-3.5 md:px-5 md:py-4 bg-white border-2 border-stone-200 rounded-lg sm:rounded-xl text-sm sm:text-base focus:ring-2 focus:ring-stone-400 focus:border-stone-400 outline-none resize-none text-stone-900 leading-relaxed placeholder:text-stone-400 transition-all shadow-sm hover:border-stone-300 font-sans"
-                  placeholder="Your transcription will appear here..."
-                  style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}
-                />
-                <p className="text-xs text-stone-500 mt-2">{transcriptText.length} characters</p>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 sm:gap-4 p-4 sm:p-6 md:p-8 border-t border-stone-200/70 bg-white/40 backdrop-blur-sm">
-              <button
-                onClick={() => setShowTranscriptModal(false)}
-                className="px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg sm:rounded-xl border-2 border-stone-300 text-stone-700 text-sm sm:text-base font-semibold hover:bg-stone-100 hover:border-stone-400 transition-all shadow-sm order-2 sm:order-1"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={downloadTranscript}
-                className="px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg sm:rounded-xl bg-linear-to-r from-stone-800 to-stone-900 hover:from-stone-900 hover:to-black text-white text-sm sm:text-base font-semibold transition-all shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center gap-2 sm:gap-2.5 order-1 sm:order-2"
-              >
-                <Save size={18} className="sm:w-5 sm:h-5" />
-                Save & Download
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <TranscriptModal
+        showModal={showTranscriptModal}
+        transcriptText={transcriptText}
+        transcriptName={transcriptName}
+        onClose={() => setShowTranscriptModal(false)}
+        onTranscriptTextChange={(e) => setTranscriptText(e.target.value)}
+        onTranscriptNameChange={(e) => setTranscriptName(e.target.value)}
+        onDownload={downloadTranscript}
+        isSummarizing={isSummarizing}
+        showSummary={showSummary}
+        summaryText={summaryText}
+        setSummaryText={setSummaryText}
+        onSummarize={summarizeTranscript}
+        isEditingEmail={isEditingEmail}
+        setIsEditingEmail={setIsEditingEmail}
+        emailRecipients={emailRecipients}
+        emailInputValue={emailInputValue}
+        setEmailInputValue={setEmailInputValue}
+        handleEmailKeyDown={handleEmailKeyDown}
+        removeEmailRecipient={removeEmailRecipient}
+        emailSubject={emailSubject}
+        setEmailSubject={setEmailSubject}
+        onSendEmail={sendEmail}
+        onBackToTranscript={handleBackToTranscript}
+        isSendingEmail={isSendingEmail}
+        emailSentSuccess={emailSentSuccess}
+      />
     </div>
   );
 }
