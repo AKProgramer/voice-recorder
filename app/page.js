@@ -1,4 +1,8 @@
 "use client";
+// Load environment variables in development
+if (typeof window === "undefined") {
+  require('dotenv').config();
+}
 import React, { useState, useRef, useEffect } from 'react';
 import { marked } from 'marked';
 import BackgroundAnimation from '@/components/BackgroundAnimation';
@@ -76,7 +80,9 @@ export default function AudioRecorder() {
         setMediaRecorderState('inactive');
       };
 
-      mediaRecorderRef.current.start();
+      // Start recording with timeslice to collect data continuously
+      // Using 10 second chunks to avoid browser limitations
+      mediaRecorderRef.current.start(10000);
       setMediaRecorderState(mediaRecorderRef.current.state);
       setIsRecording(true);
       setRecordingTime(0);
@@ -203,7 +209,7 @@ export default function AudioRecorder() {
         await new Promise(resolve => setTimeout(resolve, 3000));
       }
     } catch (error) {
-      console.error('Transcription error:', error);
+      console.log('Transcription error:', error);
       alert('Failed to transcribe audio. Please try again.');
     } finally {
       setIsTranscribing(false);
@@ -230,53 +236,54 @@ export default function AudioRecorder() {
     setIsSummarizing(true);
 
     try {
-      const prompt = `
-          You are a professional summarization assistant.
+     const prompt = `
+        You are a professional music-lesson summary assistant.
 
-          Your job is to create a **clean, organized, Markdown-formatted summary** of the transcript I will provide.
+        Your job is to create a **friendly, parent-facing summary** of the class transcript I will provide.
 
-          ### SUMMARY RULES
-          - Use clear Markdown headings (##, ###, ####)
-          - Use bullet points (-) for lists
-          - Keep only important and meaningful information
-          - Remove filler words, repetitions, greetings, and irrelevant small talk
-          - Preserve the full meaning and key points
-          - Keep the summary in chronological order
-          - Clearly highlight:
-            - Key insights
-            - Decisions made
-            - Tasks and action items
-            - Important outcomes and conclusions
-          - Only add sections that are relevant to this transcript
-          - Do NOT invent or assume information
+        ### STYLE & TONE
+        - Warm, encouraging, and easy for parents to understand  
+        - No technical music jargon unless explained simply  
+        - No markdown headings  
+        - Keep sentences simple and natural  
+        - Write as if the teacher is talking directly to the parent  
+        - Start with a friendly greeting like: 
+          "Hello! Your child had a great lesson today, and we made wonderful progress."
 
-          ### OUTPUT FORMAT
-          Your summary must be structured like this (only include sections that apply):
+        ### CONTENT RULES
+        - Extract only meaningful teaching moments from the transcript  
+        - Highlight what the child practiced and what they learned  
+        - Create a clear "Assignments and Practice" section  
+          including each exercise/piece and what to focus on  
+        - Provide simple "Practice Reminders" at the end  
+        - Do NOT add anything not mentioned in the transcript  
+        - Do NOT include filler, small talk, greetings between teacher/students  
+        - Keep it clean, clear, and parent-friendly  
 
-          ## Overview  
-          - Brief overview of what the transcript is about
+        ### OUTPUT FORMAT
+        Follow this structure exactly:
 
-          ## Key Points / Discussion Summary  
-          - Main topics discussed  
-          - Important explanations, clarifications, or ideas  
+        1. **Friendly Intro**  
+          A warm, positive 1–2 line greeting.
 
-          ## Decisions Made  
-          - List of decisions (if any)
+        2. **Assignments and Practice**  
+          List each song/exercise and what the child should focus on.
 
-          ## Action Items / Tasks  
-          - Who needs to do what (if mentioned)
+        3. **Today’s Lesson Summary**  
+          A short explanation of what concepts were taught today 
+          (notes, rhythms, hand placement, coordination, etc.).
 
-          ## Conclusion  
-          - Final thoughts or outcomes
+        4. **Practice Reminders**  
+          Simple bullet points to help parents guide practice at home.
 
-          ---
+        ---
 
-          ### TRANSCRIPT:
-          ${transcriptText}
-          `;
-
-
-      const response = await fetch('https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=AIzaSyC8y-1n9Nua2YJT0jdhY9PqTwVPXYErT20', {
+        ### TRANSCRIPT:
+        ${transcriptText}
+        `;
+      const geminiApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
+      {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -393,16 +400,18 @@ export default function AudioRecorder() {
     setEmailSubject('');
   };
 
-  return (
-    <div className="min-h-screen bg-linear-to-br from-stone-100 via-amber-50 to-stone-100 flex flex-col items-center justify-between p-4 sm:p-6 md:p-8 relative overflow-hidden">
+ return (
+    <div className="min-h-screen bg-gradient-to-br from-stone-100 via-amber-50 to-stone-100 flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 lg:p-8 relative overflow-hidden">
 
       {/* Animated background circles */}
       <BackgroundAnimation />
 
-      <div className="z-10 flex flex-col items-center w-full max-w-2xl space-y-16 sm:space-y-24 md:space-y-40">
+      <div className="z-10 flex flex-col items-center justify-center w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-2xl space-y-8 sm:space-y-12 md:space-y-16 lg:space-y-24 min-h-[80vh] sm:min-h-[70vh]">
 
         {/* Timer Display */}
-        <TimerDisplay recordingTime={recordingTime} isRecording={isRecording} />
+        <div className="w-full flex justify-center">
+          <TimerDisplay recordingTime={recordingTime} isRecording={isRecording} />
+        </div>
 
         {/* Audio Player */}
         {audioURL && !isRecording && (
@@ -419,26 +428,28 @@ export default function AudioRecorder() {
         )}
 
         {/* Control Buttons */}
-        <ControlButtons
-          isRecording={isRecording}
-          audioURL={audioURL}
-          isTranscribing={isTranscribing}
-          isPlaying={isPlaying}
-          onRecord={startRecording}
-          onStop={stopRecording}
-          onPlayPause={togglePlayPause}
-          onTranscribe={getTranscription}
-          onDownload={downloadRecording}
-        />
+        <div className="w-full flex justify-center px-2 sm:px-4">
+          <ControlButtons
+            isRecording={isRecording}
+            audioURL={audioURL}
+            isTranscribing={isTranscribing}
+            isPlaying={isPlaying}
+            onRecord={startRecording}
+            onStop={stopRecording}
+            onPlayPause={togglePlayPause}
+            onTranscribe={getTranscription}
+            onDownload={downloadRecording}
+          />
+        </div>
 
         {/* Status hint text */}
         {!isRecording && audioURL && (
-          <p className="text-stone-600 text-xs sm:text-sm text-center px-4">
+          <p className="text-stone-600 text-xs sm:text-sm md:text-base text-center px-4 sm:px-6 max-w-md">
             Click center button to play • Use side buttons for transcription or download
           </p>
         )}
         {!isRecording && !audioURL && (
-          <p className="text-stone-600 text-xs sm:text-sm text-center px-4">
+          <p className="text-stone-600 text-xs sm:text-sm md:text-base text-center px-4 sm:px-6 max-w-md">
             Click the button to start recording
           </p>
         )}
