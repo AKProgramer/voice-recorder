@@ -1,4 +1,4 @@
-import { X, Edit2, FileText, Save, Mail, Eye, Loader2, ArrowLeft, CheckCircle } from 'lucide-react';
+import { X, Edit2, FileText, Save, Mail, Eye, Loader2, ArrowLeft, CheckCircle, Upload, CloudUpload } from 'lucide-react';
 
 export default function TranscriptModal({
   showModal,
@@ -25,7 +25,9 @@ export default function TranscriptModal({
   onSendEmail,
   onBackToTranscript,
   isSendingEmail,
-  emailSentSuccess
+  emailSentSuccess,
+  isUploadingToDrive,
+  driveUploadSuccess
 }) {
   if (!showModal) return null;
 
@@ -200,7 +202,23 @@ export default function TranscriptModal({
             </button>
           )}
           
-          {isSummarizing ? (
+          {isUploadingToDrive ? (
+            <button
+              disabled
+              className="px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg sm:rounded-xl bg-blue-600 text-white text-sm sm:text-base font-semibold flex items-center justify-center gap-2 sm:gap-2.5 order-1 sm:order-2 cursor-wait"
+            >
+              <Loader2 size={18} className="sm:w-5 sm:h-5 animate-spin" />
+              Uploading to Google Drive...
+            </button>
+          ) : driveUploadSuccess ? (
+            <button
+              disabled
+              className="px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg sm:rounded-xl bg-stone-700 text-white text-sm sm:text-base font-semibold flex items-center justify-center gap-2 sm:gap-2.5 order-1 sm:order-2"
+            >
+              <CheckCircle size={18} className="sm:w-5 sm:h-5" />
+              Uploaded to Google Drive!
+            </button>
+          ) : isSummarizing ? (
             <button
               disabled
               className="px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg sm:rounded-xl bg-stone-600 text-white text-sm sm:text-base font-semibold flex items-center justify-center gap-2 sm:gap-2.5 order-1 sm:order-2 cursor-wait"
@@ -240,7 +258,7 @@ export default function TranscriptModal({
               className="px-6 sm:px-8 py-2.5 sm:py-3 rounded-lg sm:rounded-xl bg-linear-to-r from-stone-800 to-stone-900 hover:from-stone-900 hover:to-black text-white text-sm sm:text-base font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2 sm:gap-2.5 order-1 sm:order-2 cursor-pointer"
             >
               <Save size={18} className="sm:w-5 sm:h-5" />
-              Save & Next
+              Save
             </button>
           )}
         </div>

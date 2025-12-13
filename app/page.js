@@ -32,6 +32,8 @@ export default function AudioRecorder() {
   const [emailSubject, setEmailSubject] = useState('');
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailSentSuccess, setEmailSentSuccess] = useState(false);
+  const [isUploadingToDrive, setIsUploadingToDrive] = useState(false);
+  const [driveUploadSuccess, setDriveUploadSuccess] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -151,6 +153,103 @@ export default function AudioRecorder() {
     }
   };
 
+  const startNewRecording = () => {
+    // Stop current playback if playing
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      setIsPlaying(false);
+    }
+    
+    // Reset all recording-related states to show mic button
+    setAudioURL(null);
+    setAudioBlobRef(null);
+    setRecordingTime(0);
+    setTranscriptText('');
+    setTranscriptName('');
+    setShowTranscriptModal(false);
+    setShowSummary(false);
+    setSummaryText('');
+    setMarkdownSummary('');
+    // User can now click the mic button to start recording when ready
+  };
+
+  const handleUploadAudio = () => {
+    // Create a file input element
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'audio/*';
+    
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      
+      // Create URL for the uploaded audio
+      const url = URL.createObjectURL(file);
+      setAudioURL(url);
+      setAudioBlobRef(file);
+      
+      // Automatically start transcription
+      setIsTranscribing(true);
+      
+      try {
+        // Upload to AssemblyAI
+        const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
+          method: 'POST',
+          headers: {
+            'authorization': 'afc9f57b9e0c42169ecfaa74a4047811',
+          },
+          body: file
+        });
+
+        const { upload_url } = await uploadResponse.json();
+
+        // Request transcription
+        const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
+          method: 'POST',
+          headers: {
+            'authorization': 'afc9f57b9e0c42169ecfaa74a4047811',
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            audio_url: upload_url
+          })
+        });
+
+        const { id } = await transcriptResponse.json();
+
+        // Poll for completion
+        let transcript = null;
+        while (true) {
+          const pollingResponse = await fetch(`https://api.assemblyai.com/v2/transcript/${id}`, {
+            headers: {
+              'authorization': 'afc9f57b9e0c42169ecfaa74a4047811',
+            }
+          });
+
+          transcript = await pollingResponse.json();
+
+          if (transcript.status === 'completed') {
+            setTranscriptText(transcript.text);
+            setTranscriptName(`uploaded-${Date.now()}`);
+            setShowTranscriptModal(true);
+            break;
+          } else if (transcript.status === 'error') {
+            throw new Error('Transcription failed');
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+      } catch (error) {
+        console.log('Transcription error:', error);
+        alert('Failed to transcribe audio. Please try again.');
+      } finally {
+        setIsTranscribing(false);
+      }
+    };
+    
+    input.click();
+  };
+
   const getTranscription = async () => {
     if (!audioBlobRef) {
       alert('No audio recording found');
@@ -227,15 +326,51 @@ export default function AudioRecorder() {
     setShowTranscriptModal(false);
   };
 
+  const uploadTranscriptToDrive = async () => {
+    const response = await fetch('/api/upload-transcript', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        transcriptText,
+        transcriptName: transcriptName || `transcript-${Date.now()}`,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error || 'Failed to save transcript to Google Drive');
+    }
+
+    return data.fileId;
+  };
+
   const summarizeTranscript = async () => {
     if (!transcriptText) {
       alert('No transcript text to summarize');
       return;
     }
 
-    setIsSummarizing(true);
+    // First, upload to Google Drive
+    setIsUploadingToDrive(true);
+    setDriveUploadSuccess(false);
 
     try {
+      await uploadTranscriptToDrive();
+      
+      // Show success message briefly
+      setDriveUploadSuccess(true);
+      setIsUploadingToDrive(false);
+      
+      // Wait 1.5 seconds to show the success message
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Now start summarizing
+      setDriveUploadSuccess(false);
+      setIsSummarizing(true);
+
      const prompt = `
         You are a professional music-lesson summary assistant.
 
@@ -311,9 +446,11 @@ export default function AudioRecorder() {
       }
     } catch (error) {
       console.error('Summarization error:', error);
-      alert('Failed to summarize transcript. Please try again.');
+      alert(error.message || 'Failed to process transcript. Please try again.');
     } finally {
       setIsSummarizing(false);
+      setIsUploadingToDrive(false);
+      setDriveUploadSuccess(false);
     }
   };
 
@@ -401,12 +538,12 @@ export default function AudioRecorder() {
   };
 
  return (
-    <div className="min-h-screen bg-gradient-to-br from-stone-100 via-amber-50 to-stone-100 flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 lg:p-8 relative overflow-hidden">
+    <div className="min-h-screen bg-linear-to-br from-stone-100 via-amber-50 to-stone-100 flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 lg:p-8 relative overflow-hidden">
 
       {/* Animated background circles */}
       <BackgroundAnimation />
 
-      <div className="z-10 flex flex-col items-center justify-center w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-2xl space-y-8 sm:space-y-12 md:space-y-16 lg:space-y-24 min-h-[80vh] sm:min-h-[70vh]">
+      <div className="z-10 flex flex-col items-center justify-center w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-2xl space-y-6 sm:space-y-8 md:space-y-12 lg:space-y-14">
 
         {/* Timer Display */}
         <div className="w-full flex justify-center">
@@ -415,7 +552,7 @@ export default function AudioRecorder() {
 
         {/* Audio Player */}
         {audioURL && !isRecording && (
-          <div className="w-full">
+          <div className="w-full m">
             <audio
               ref={audioPlayerRef}
               src={audioURL}
@@ -439,17 +576,19 @@ export default function AudioRecorder() {
             onPlayPause={togglePlayPause}
             onTranscribe={getTranscription}
             onDownload={downloadRecording}
+            onNewRecording={startNewRecording}
+            onUpload={handleUploadAudio}
           />
         </div>
 
         {/* Status hint text */}
         {!isRecording && audioURL && (
-          <p className="text-stone-600 text-xs sm:text-sm md:text-base text-center px-4 sm:px-6 max-w-md">
+          <p className="text-stone-600 text-[10px] sm:text-xs md:text-sm text-center px-4 sm:px-6 max-w-md">
             Click center button to play • Use side buttons for transcription or download
           </p>
         )}
         {!isRecording && !audioURL && (
-          <p className="text-stone-600 text-xs sm:text-sm md:text-base text-center px-4 sm:px-6 max-w-md">
+          <p className="text-stone-600 text-[10px] sm:text-xs md:text-sm text-center px-4 sm:px-6 max-w-md">
             Click the button to start recording
           </p>
         )}
@@ -482,6 +621,8 @@ export default function AudioRecorder() {
         onBackToTranscript={handleBackToTranscript}
         isSendingEmail={isSendingEmail}
         emailSentSuccess={emailSentSuccess}
+        isUploadingToDrive={isUploadingToDrive}
+        driveUploadSuccess={driveUploadSuccess}
       />
     </div>
   );
